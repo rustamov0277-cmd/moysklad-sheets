@@ -83,12 +83,22 @@ def ms_get(path, params=None, retries=3):
                     raw = gzip.decompress(raw)
                 return json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="ignore")
+            raw = e.read()
+            # Хато жавоби ҳам gzip'да сиқилган бўлиши мумкин — очамиз
+            if e.headers.get("Content-Encoding") == "gzip":
+                try:
+                    import gzip
+                    raw = gzip.decompress(raw)
+                except Exception:
+                    pass
+            body = raw.decode("utf-8", errors="ignore")
             try:
                 errs = json.loads(body).get("errors", [])
-                msg = "; ".join(x.get("error", "") for x in errs)[:300]
+                msg = "; ".join(
+                    (x.get("error", "") + " | param: " + str(x.get("parameter", "")))
+                    for x in errs)[:400]
             except Exception:
-                msg = body[:300]
+                msg = body[:400]
             log.error("MS HTTP %s (%s): %s", e.code, path, msg or "(bo'sh)")
             if e.code in (401, 403):
                 return None  # токен хато — қайта уринишдан фойда йўқ
