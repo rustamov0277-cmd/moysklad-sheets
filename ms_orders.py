@@ -80,8 +80,13 @@ def ms_get(path, params=None, retries=3):
                     raw = gzip.decompress(raw)
                 return json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="ignore")[:300]
-            log.error("MS HTTP %s: %s", e.code, body)
+            body = e.read().decode("utf-8", errors="ignore")
+            try:
+                errs = json.loads(body).get("errors", [])
+                msg = "; ".join(x.get("error", "") for x in errs)[:300]
+            except Exception:
+                msg = body[:300]
+            log.error("MS HTTP %s (%s): %s", e.code, path, msg or "(bo'sh)")
             if e.code in (401, 403):
                 return None  # токен хато — қайта уринишдан фойда йўқ
             time.sleep(2)
@@ -102,7 +107,9 @@ def fetch_orders(since_date):
             "order": "moment,asc",
             "limit": limit,
             "offset": offset,
-            "expand": "agent,state,store,positions.assortment,project",
+            # МУҲИМ: filter билан бирга КЎП expand ишламайди (HTTP 400) —
+            # шунинг учун фақат зарурларини сўраймиз, positions алоҳида олинади
+            "expand": "agent,state,store,project",
         })
         if data is None:
             log.error("Buyurtmalarni olib bo'lmadi")
@@ -116,6 +123,17 @@ def fetch_orders(since_date):
             break
         time.sleep(0.3)  # API'ни ортиқча юкламаслик
     return out
+
+
+def fetch_positions(order_id):
+    """Буюртма маҳсулотларини алоҳида сўров билан олади (expand чеклови сабабли)."""
+    data = ms_get(f"/entity/customerorder/{order_id}/positions", {
+        "limit": 100,
+        "expand": "assortment",
+    })
+    if not data:
+        return []
+    return data.get("rows", [])
 
 
 def get_attr(order, keys):
@@ -175,7 +193,7 @@ def parse_order(order):
     manzil = order.get("shipmentAddress", "") or get_attr(order, CUSTOM_FIELDS["Manzil"])
     logistika = get_attr(order, CUSTOM_FIELDS["Logistika"])
 
-    positions = ((order.get("positions") or {}).get("rows") or [])
+    positions = fetch_positions(ms_id)
     rows = []
     if not positions:
         positions = [{}]
@@ -251,13 +269,16 @@ def main():
     already = existing_ids(ws)
     log.info("Шитсда аллақачон %d та буюртма бор", len(already))
 
+    new_orders = [o for o in orders if o.get("id") not in already]
+    log.info("Янги буюртмалар: %d та (ҳар бири учун маҳсулотлар олинмоқда...)", len(new_orders))
+
     new_rows = []
     new_count = 0
-    for order in orders:
-        if order.get("id") in already:
-            continue
+    for i, order in enumerate(new_orders, 1):
         new_rows.extend(parse_order(order))
         new_count += 1
+        if i % 25 == 0:
+            log.info("   ... %d/%d", i, len(new_orders))
 
     if not new_rows:
         log.info("Янги буюртма йўқ")
