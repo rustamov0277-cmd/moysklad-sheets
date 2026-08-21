@@ -68,10 +68,13 @@ def ms_get(path, params=None, retries=3):
 
     for attempt in range(1, retries + 1):
         try:
+            # МУҲИМ: МойСклад Python'нинг стандарт User-Agent'ини РАД ЭТАДИ
+            # (HTTP 415). Шунинг учун curl'га ўхшаш сарлавҳалар юборилади.
             req = urllib.request.Request(url, headers={
                 "Authorization": "Bearer " + MS_TOKEN,
+                "Accept": "*/*",
+                "User-Agent": "curl/8.5.0",
                 "Accept-Encoding": "gzip",
-                "Content-Type": "application/json",
             })
             with urllib.request.urlopen(req, timeout=40) as r:
                 raw = r.read()
