@@ -22,6 +22,7 @@ curl'и орқали юборилади. Сабаби — МойСклад'ни�
   MS_TOKEN, MS_SHEET_ID, MS_SA_JSON, MS_WORKSHEET, MS_START_DATE
   MS_REFRESH_DAYS (ихтиёрий, default 10)
 """
+import fcntl
 import json
 import logging
 import os
@@ -43,6 +44,7 @@ SA_JSON = os.environ.get("MS_SA_JSON", "/root/moysklad/service_account.json")
 WORKSHEET = os.environ.get("MS_WORKSHEET", "MoySklad")
 START_DATE = os.environ.get("MS_START_DATE", "2026-08-22")
 REFRESH_DAYS = int(os.environ.get("MS_REFRESH_DAYS", "10"))
+LOCK_FILE = os.environ.get("MS_LOCK_FILE", "/tmp/ms_orders.lock")
 
 API = "https://api.moysklad.ru/api/remap/1.2"
 
@@ -371,4 +373,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # ── ҚУЛФ: бир вақтда ФАҚАТ БИТТА жараён ишлаши мумкин ──────────────
+    # НЕГА КЕРАК: қўлда ишга туширилганда cron ҳам ишга тушса, иккаласи
+    # ҳам "шитс бўш" деб кўриб, ҳаммасини ДУБЛИКАТ қилиб ёзиб юборарди.
+    _lock = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log.warning("⏳ Бошқа жараён аллақачон ишлаяпти — ўтказиб юборилди")
+        raise SystemExit(0)
+
+    try:
+        main()
+    finally:
+        fcntl.flock(_lock, fcntl.LOCK_UN)
+        _lock.close()
