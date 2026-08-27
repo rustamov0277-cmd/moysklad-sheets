@@ -272,7 +272,16 @@ def main():
         ws.append_row(HEADERS)
         values = [HEADERS]
     elif values[0] != HEADERS:
-        log.warning("⚠️  Шитсдаги сарлавҳа мос эмас — янгиланмоқда")
+        has_old_data = len(values) > 1 and any(r and any(r) for r in values[1:])
+        if has_old_data:
+            # ХАВФСИЗЛИК: сарлавҳани жимгина алмаштирсак, эски форматдаги
+            # қаторлар устунлар бўйича СИЛЖИБ қолади (маълумот бузилади).
+            log.error("❌ Шитсдаги сарлавҳа МОС ЭМАС, лекин эски маълумот бор!")
+            log.error("   Кутилган: %s", " | ".join(HEADERS[:6]) + " ...")
+            log.error("   Шитсда:   %s", " | ".join(values[0][:6]) + " ...")
+            log.error("   Ечим: '%s' варағини БУТУНЛАЙ тозаланг (ёки ўчиринг), "
+                      "кейин қайта ишга туширинг.", WORKSHEET)
+            raise SystemExit(1)
         ws.update([HEADERS], f"A1:{col_letter(len(HEADERS)-1)}1")
         values[0] = HEADERS
 
