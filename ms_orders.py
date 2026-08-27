@@ -64,6 +64,14 @@ MUTABLE = ["статус", "склад", "роп", "сотувчи", "источ
 # Ҳозирча МойСкладда манбаси йўқ — кейинчалик тўлдирилади
 EMPTY_COLS = ["Креатив", "Таргетолог", "Ии профиль", "Форма"]
 
+# Кўп маҳсулотли буюртмада ФАҚАТ БИРИНЧИ қаторда ёзилади (қолганлари бўш) —
+# такрорланиб кўзни чалғитмаслиги учун
+FIRST_ROW_ONLY = ["№", "исм", "телефон", "сумма", "регион", "адресс", "комментария"]
+# Қолганлари (дата, товар, кол, статус, склад, роп, сотувчи, источник,
+# изменения, логистика, формула, ID) ҳар қаторда такрорланади.
+# MS_ID ҳам ҳар қаторда — усиз статус ўзгарганда 2-3-қаторлар топилмай,
+# эски ҳолда қотиб қоларди (техник устун, кўзга ташланмайди).
+
 
 # ═══════════════════════ МойСклад API (curl орқали) ═══════════════════════
 
@@ -221,16 +229,16 @@ def build_rows(order, order_num):
 
         row = []
         for h in HEADERS:
-            if h == "№":
-                row.append(order_num if i == 0 else "")
-            elif h == "товар":
+            if h == "товар":
                 row.append(tovar)
             elif h == "кол":
                 row.append(kol)
-            elif h == "сумма":
-                row.append(f["сумма"] if i == 0 else "")
             elif h in EMPTY_COLS:
                 row.append("")
+            elif h == "№":
+                row.append(order_num if i == 0 else "")
+            elif h in FIRST_ROW_ONLY:
+                row.append(f.get(h, "") if i == 0 else "")
             else:
                 row.append(f.get(h, ""))
         rows.append(row)
@@ -331,9 +339,14 @@ def main():
         if not rows_idx:
             continue
         f = order_fields(o)
+        first_rn = min(rows_idx)
         for rn in rows_idx:
             cur = data_rows[rn - 2]
             for h in MUTABLE:
+                # Фақат 1-қаторда ёзиладиган устунлар — қолган қаторларда
+                # бўш бўлиши КЕРАК, шунинг учун уларга тегмаймиз
+                if h in FIRST_ROW_ONLY and rn != first_rn:
+                    continue
                 c = COL[h]
                 old = cur[c] if len(cur) > c else ""
                 new = str(f.get(h, ""))
