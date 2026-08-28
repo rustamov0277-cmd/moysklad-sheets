@@ -281,7 +281,9 @@ def main():
     if not values:
         ws.append_row(HEADERS)
         values = [HEADERS]
-    elif values[0] != HEADERS:
+    elif [c.strip() for c in values[0][:len(HEADERS)]] != HEADERS:
+        # Диққат: охиридаги бўш устунлар (шитсда 24 эмас, 26 устун бўлса)
+        # ва ортиқча бўшлиқлар ҳисобга олинмайди — фақат ҲАҚИҚИЙ фарқ муҳим
         has_old_data = len(values) > 1 and any(r and any(r) for r in values[1:])
         if has_old_data:
             # ХАВФСИЗЛИК: сарлавҳани жимгина алмаштирсак, эски форматдаги
