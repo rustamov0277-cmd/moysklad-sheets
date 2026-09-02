@@ -59,7 +59,7 @@ MS_ID_COL_1 = COL["MS_ID"] + 1                           # gspread 1-индек�
 
 # Вақт ўтиб ЎЗГАРИШИ мумкин бўлган устунлар — ҳар ишга туширишда текширилади
 MUTABLE = ["статус", "склад", "роп", "сотувчи", "источник", "регион",
-           "адресс", "изменения", "логистика", "комментария", "ID"]
+           "адресс", "изменения", "логистика", "комментария", "ID", "сумма"]
 
 # Ҳозирча МойСкладда манбаси йўқ — кейинчалик тўлдирилади
 EMPTY_COLS = ["Креатив", "Таргетолог", "Ии профиль", "Форма"]
@@ -348,6 +348,35 @@ def main():
             continue
         f = order_fields(o)
         first_rn = min(rows_idx)
+
+        # Сумма ўзгарганми? Агар ҳа — маҳсулотлар ҳам ўзгарган бўлиши мумкин,
+        # шунинг учун ўша буюртманинг товар/кол қаторларини ҚАЙТА ўқиймиз.
+        # (Позиция сўрови қиммат — фақат сумма ўзгарган буюртмалар учун)
+        cur_first = data_rows[first_rn - 2]
+        old_sum = cur_first[COL["сумма"]] if len(cur_first) > COL["сумма"] else ""
+        if old_sum != str(f["сумма"]):
+            pos = fetch_positions(o.get("id"))
+            if pos and len(pos) == len(rows_idx):
+                for k, (rn, ps) in enumerate(zip(sorted(rows_idx), pos)):
+                    tovar = (ps.get("assortment") or {}).get("name", "—")
+                    kol = ps.get("quantity", "")
+                    try:
+                        kol = int(float(kol))
+                    except (TypeError, ValueError):
+                        pass
+                    cur = data_rows[rn - 2]
+                    for h, val in (("товар", tovar), ("кол", kol)):
+                        c = COL[h]
+                        old = cur[c] if len(cur) > c else ""
+                        if old != str(val):
+                            updates.append({"range": f"{col_letter(c)}{rn}",
+                                            "values": [[val]]})
+                            changed_ids.add(o.get("id"))
+            elif pos:
+                log.warning("⚠️  Сделка %s: маҳсулот сони ўзгарган "
+                            "(шитсда %d, МойСкладда %d) — қўлда текширинг",
+                            f.get("ID") or o.get("id"), len(rows_idx), len(pos))
+
         for rn in rows_idx:
             cur = data_rows[rn - 2]
             for h in MUTABLE:
