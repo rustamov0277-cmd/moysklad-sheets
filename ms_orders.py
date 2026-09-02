@@ -316,7 +316,13 @@ def main():
             except ValueError:
                 pass
 
-    log.info("Шитсда %d та буюртма (%d қатор)", len(existing), len(data_rows))
+    # Охирги ҲАҚИҚИЙ маълумот қатори (MS_ID бор бўлган энг пастки қатор).
+    # ⚠️ append_rows ИШЛАТИЛМАЙДИ: шитсда фойдаланувчи қўшган формулалар/
+    # устунлар пастга чўзилган бўлса, append янги қаторларни ЖУДА ПАСТГА
+    # (масалан 3508-қаторга) ёзиб, катта бўш оралиқ қолдирарди.
+    last_data_row = max(existing[k][-1] for k in existing) if existing else 1
+    log.info("Шитсда %d та буюртма | охирги маълумот қатори: %d | ўқилган: %d",
+             len(existing), last_data_row, len(data_rows))
 
     # ── Қайси кундан бошлаб оламиз ──
     if has_data:
@@ -383,8 +389,19 @@ def main():
         if i % 25 == 0:
             log.info("   ... %d/%d", i, len(new_orders))
 
-    ws.append_rows(new_rows, value_input_option="USER_ENTERED")
-    log.info("✅ %d та янги буюртма (%d қатор) қўшилди", len(new_orders), len(new_rows))
+    # Аниқ диапазонга ёзамиз (append эмас) — бўш оралиқ қолмаслиги учун
+    start_row = last_data_row + 1
+    end_row = start_row + len(new_rows) - 1
+
+    # Шитсда етарли қатор борми — керак бўлса қўшамиз
+    if end_row > ws.row_count:
+        ws.add_rows(end_row - ws.row_count + 500)
+        log.info("   шитсга қатор қўшилди (%d гача)", end_row + 500)
+
+    rng = f"A{start_row}:{col_letter(len(HEADERS)-1)}{end_row}"
+    ws.update(new_rows, rng, value_input_option="USER_ENTERED")
+    log.info("✅ %d та янги буюртма (%d қатор) қўшилди → %s",
+             len(new_orders), len(new_rows), rng)
 
 
 if __name__ == "__main__":
