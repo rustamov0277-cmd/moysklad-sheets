@@ -47,6 +47,7 @@ WORKSHEET = os.environ.get("MS_WORKSHEET", "MoySklad")
 START_DATE = os.environ.get("MS_START_DATE", "2026-08-22")
 REFRESH_DAYS = int(os.environ.get("MS_REFRESH_DAYS", "10"))
 LOCK_FILE = os.environ.get("MS_LOCK_FILE", "/tmp/ms_orders.lock")
+DEBUG = os.environ.get("MS_DEBUG", "") == "1"   # MS_DEBUG=1 → фарқларни кўрсатади
 
 API = "https://api.moysklad.ru/api/remap/1.2"
 
@@ -269,8 +270,9 @@ def norm(v):
     `1 600 000` кўринишида сақлайди. Кейинги ўқишда бу иккиси тенг
     бўлмагани учун, ҳар циклда «ўзгарган» деб ҳисобланиб, ҳамма буюртма
     бекордан-бекор қайта ёзиларди (ва позиция сўрови юбориларди)."""
-    s = str(v if v is not None else "").strip()
+    s = str(v if v is not None else "")
     s = s.replace("\u00a0", " ")                 # бузилмас бўшлиқ
+    s = re.sub(r"\s+", " ", s).strip()           # қатор ташлаш/таб/кўп бўшлиқ → битта
     t = s.replace(" ", "").replace(",", ".")
     if re.fullmatch(r"-?\d+(\.\d+)?", t):        # рақамми?
         f = float(t)
@@ -278,19 +280,31 @@ def norm(v):
     return s
 
 
-DATE_RE = re.compile(r"\d{2}\.\d{2}\.\d{4}")
+# "22.08.2026" ёки "22.08.2026 10:15" ёки "22.08.2026 10:15:30"
+DT_RE = re.compile(r"^(\d{2}\.\d{2}\.\d{4})(?:[ T](\d{2}:\d{2}))?(?::\d{2})?$")
+
+
+def as_datetime(s):
+    """Сана-вақт бўлса (сана, соат:дақиқа) қайтаради, акс ҳолда None.
+    Сониялар ЭЪТИБОРГА ОЛИНМАЙДИ — шитс уларни ўзи қўшиб/олиб ташлайди."""
+    m = DT_RE.match(s)
+    return (m.group(1), m.group(2)) if m else None
 
 
 def same_value(old, new):
-    """Иккита қиймат амалда бир хилми."""
+    """Иккита қиймат амалда бир хилми (формат фарқлари ҳисобга олинмайди)."""
     a, b = norm(old), norm(new)
     if a == b:
         return True
-    # Сана: устун "фақат сана" форматида бўлса, шитс вақтни қирқиб қайтаради
-    # ("22.08.2026 10:15" -> "22.08.2026"). Бу ҳам "ўзгармаган" ҳисобланади.
-    da, db = a.split(" ")[0], b.split(" ")[0]
-    if da == db and DATE_RE.fullmatch(da) and (" " in a) != (" " in b):
-        return True
+
+    da, db = as_datetime(a), as_datetime(b)
+    if da and db:
+        if da[0] != db[0]:          # сана ҳар хил — ҳақиқий ўзгариш
+            return False
+        # Бири вақтсиз (устун "фақат сана" форматида) — тенг ҳисоблаймиз
+        if da[1] is None or db[1] is None:
+            return True
+        return da[1] == db[1]       # соат:дақиқа бўйича (сониясиз)
     return False
 
 
@@ -427,6 +441,9 @@ def main():
                     updates.append({"range": f"{col_letter(c)}{rn}", "values": [[new]]})
                     changed_ids.add(o.get("id"))
                     changed_cols[h] += 1
+                    if DEBUG and changed_cols[h] <= 3:
+                        log.info("   [debug] %s қатор%d: шитсда=%r ← код=%r",
+                                 h, rn, old, str(new))
 
     if updates:
         # Google API чекловидан ошмаслик учун бўлакларга бўламиз
