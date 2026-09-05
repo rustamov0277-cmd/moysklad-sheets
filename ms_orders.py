@@ -22,10 +22,12 @@ curl'и орқали юборилади. Сабаби — МойСклад'ни�
   MS_TOKEN, MS_SHEET_ID, MS_SA_JSON, MS_WORKSHEET, MS_START_DATE
   MS_REFRESH_DAYS (ихтиёрий, default 10)
 """
+import collections
 import fcntl
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import urllib.parse
@@ -260,6 +262,38 @@ def get_ws():
     return ws, ws.get_all_values()
 
 
+def norm(v):
+    """Солиштириш учун қийматни нормаллаштиради.
+
+    НЕГА КЕРАК: код шитсга `1600000` деб ёзади, Google Sheets эса уни
+    `1 600 000` кўринишида сақлайди. Кейинги ўқишда бу иккиси тенг
+    бўлмагани учун, ҳар циклда «ўзгарган» деб ҳисобланиб, ҳамма буюртма
+    бекордан-бекор қайта ёзиларди (ва позиция сўрови юбориларди)."""
+    s = str(v if v is not None else "").strip()
+    s = s.replace("\u00a0", " ")                 # бузилмас бўшлиқ
+    t = s.replace(" ", "").replace(",", ".")
+    if re.fullmatch(r"-?\d+(\.\d+)?", t):        # рақамми?
+        f = float(t)
+        return str(int(f)) if f == int(f) else str(f)
+    return s
+
+
+DATE_RE = re.compile(r"\d{2}\.\d{2}\.\d{4}")
+
+
+def same_value(old, new):
+    """Иккита қиймат амалда бир хилми."""
+    a, b = norm(old), norm(new)
+    if a == b:
+        return True
+    # Сана: устун "фақат сана" форматида бўлса, шитс вақтни қирқиб қайтаради
+    # ("22.08.2026 10:15" -> "22.08.2026"). Бу ҳам "ўзгармаган" ҳисобланади.
+    da, db = a.split(" ")[0], b.split(" ")[0]
+    if da == db and DATE_RE.fullmatch(da) and (" " in a) != (" " in b):
+        return True
+    return False
+
+
 def col_letter(idx0):
     """0-индексдан A1 устун ҳарфига (0->A, 25->Z, 26->AA)."""
     n, s = idx0 + 1, ""
@@ -342,6 +376,7 @@ def main():
 
     # ═══ 1) МАВЖУДЛАРНИ ЯНГИЛАШ (статус ва ҳ.к. ўзгарган бўлса) ═══
     updates, changed_ids = [], set()
+    changed_cols = collections.Counter()   # қайси устун неча марта ўзгарди
     for o in orders:
         rows_idx = existing.get(o.get("id"))
         if not rows_idx:
@@ -354,7 +389,7 @@ def main():
         # (Позиция сўрови қиммат — фақат сумма ўзгарган буюртмалар учун)
         cur_first = data_rows[first_rn - 2]
         old_sum = cur_first[COL["сумма"]] if len(cur_first) > COL["сумма"] else ""
-        if old_sum != str(f["сумма"]):
+        if not same_value(old_sum, f["сумма"]):
             pos = fetch_positions(o.get("id"))
             if pos and len(pos) == len(rows_idx):
                 for k, (rn, ps) in enumerate(zip(sorted(rows_idx), pos)):
@@ -368,10 +403,11 @@ def main():
                     for h, val in (("товар", tovar), ("кол", kol)):
                         c = COL[h]
                         old = cur[c] if len(cur) > c else ""
-                        if old != str(val):
+                        if not same_value(old, val):
                             updates.append({"range": f"{col_letter(c)}{rn}",
                                             "values": [[val]]})
                             changed_ids.add(o.get("id"))
+                            changed_cols[h] += 1
             elif pos:
                 log.warning("⚠️  Сделка %s: маҳсулот сони ўзгарган "
                             "(шитсда %d, МойСкладда %d) — қўлда текширинг",
@@ -386,17 +422,26 @@ def main():
                     continue
                 c = COL[h]
                 old = cur[c] if len(cur) > c else ""
-                new = str(f.get(h, ""))
-                if old != new:
+                new = f.get(h, "")
+                if not same_value(old, new):
                     updates.append({"range": f"{col_letter(c)}{rn}", "values": [[new]]})
                     changed_ids.add(o.get("id"))
+                    changed_cols[h] += 1
 
     if updates:
         # Google API чекловидан ошмаслик учун бўлакларга бўламиз
         for i in range(0, len(updates), 200):
             ws.batch_update(updates[i:i+200], value_input_option="USER_ENTERED")
             time.sleep(0.5)
-        log.info("🔄 Янгиланди: %d та буюртма (%d катак)", len(changed_ids), len(updates))
+        top = ", ".join(f"{k}:{v}" for k, v in changed_cols.most_common(5))
+        log.info("🔄 Янгиланди: %d та буюртма (%d катак) — %s",
+                 len(changed_ids), len(updates), top)
+        # ОГОҲЛАНТИРИШ: агар деярли ҲАММА буюртма "ўзгарган" бўлса, бу
+        # ҳақиқий ўзгариш эмас, солиштиришдаги хатодан бўлиши мумкин
+        if len(changed_ids) > len(existing) * 0.5 and len(existing) > 20:
+            log.warning("⚠️  Буюртмаларнинг %d%% и 'ўзгарган' — бу шубҳали. "
+                        "Юқоридаги устунларни текширинг (формат мослиги).",
+                        round(len(changed_ids) / len(existing) * 100))
     else:
         log.info("🔄 Ўзгарган буюртма йўқ")
 
